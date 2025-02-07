@@ -1,67 +1,42 @@
 package com.wsystems.residentstore.configurations;
 
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+import com.nimbusds.jose.jwk.JWK;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
+import com.nimbusds.jose.shaded.jcip.Immutable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.boot.autoconfigure.security.servlet.PathRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.OAuth2Token;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationConsentService;
-import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.authentication.OAuth2ClientAuthenticationToken;
-import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
-import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
-import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
-import org.springframework.security.oauth2.server.authorization.settings.OAuth2TokenFormat;
-import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
-import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator;
-import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
-import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
-import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 import org.springframework.security.web.SecurityFilterChain;
-import com.wsystems.residentstore.configurations.customgrant.CustomUserAuthorities;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.JWKSource;
-import com.nimbusds.jose.proc.SecurityContext;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-import org.springframework.web.filter.CorsFilter;
+
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
+
 
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class AuthorizationServerConfig {
 
+	private static final Logger log = LoggerFactory.getLogger(AuthorizationServerConfig.class);
 	@Value("${security.client-id}")
 	private String clientId;
 
@@ -77,149 +52,50 @@ public class AuthorizationServerConfig {
 	@Autowired
 	private UserDetailsService userDetailsService;
 
+	@Value("${jwt.public.key}")
+	private RSAPublicKey publicKey;
+	@Value("${jwt.private.key}")
+	private RSAPrivateKey privateKey;
+
+
+
+	//Customizar a segurança do projeto
 	@Bean
-	@Order(2)
 	public SecurityFilterChain asSecurityFilterChain(HttpSecurity http) throws Exception {
 
 		http
-				.oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults())) // Configura o servidor de recursos (JWT)
-				.csrf(AbstractHttpConfigurer::disable) // Desabilita CSRF para APIs RESTful
-				.authorizeHttpRequests(auth -> auth
-						.requestMatchers("/oauth2/**", "/authorize", "/token").permitAll()  // Permite o acesso aos endpoints OAuth2
-						.anyRequest().authenticated());
+				.authorizeHttpRequests(authorize -> authorize
+						.requestMatchers(HttpMethod.POST, "/login").permitAll()
+						.anyRequest().authenticated()) //Essa linha diz que toda requisição deve ser autenticada
+		        .csrf(csrf -> csrf.disable()) //Desabilitando proteção de vulnerabilidade
+				.oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults())) //Configurando o JWT no oauth2
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) //Indicando que não vamos guardar nada em sessão, será tudo STATELESS
+
+				.securityMatcher(PathRequest.toH2Console()).csrf(csrf -> csrf.disable())
+				.headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()));
 
 		return http.build();
 	}
 
+	//Decoder da chave JWT, aqui que será feito a descriptografia da chave na requisição
 	@Bean
-	CorsConfigurationSource corsConfigurationSource() {
-
-		String[] origins = corsOrigins.split(",");
-
-		CorsConfiguration corsConfig = new CorsConfiguration();
-		corsConfig.setAllowedOriginPatterns(Arrays.asList(origins));
-		corsConfig.setAllowedMethods(Arrays.asList("POST", "GET", "PUT", "DELETE", "PATCH"));
-		corsConfig.setAllowCredentials(true);
-		corsConfig.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type"));
-
-		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-		source.registerCorsConfiguration("/**", corsConfig);
-		return source;
+	public JwtDecoder jwtDecoder(){
+		return NimbusJwtDecoder.withPublicKey(publicKey).build();
 	}
 
-	FilterRegistrationBean<CorsFilter> corsFilter() {
-		FilterRegistrationBean<CorsFilter> bean = new FilterRegistrationBean<>(
-				new CorsFilter(corsConfigurationSource()));
-		bean.setOrder(Ordered.HIGHEST_PRECEDENCE);
-		return bean;
+
+	//Encoder que irá encriptografar nossa chave JWT
+	@Bean
+	public JwtEncoder jwtEncoder(){
+		JWK jwk = new RSAKey.Builder(this.publicKey).privateKey(privateKey).build();
+		var jwks = new ImmutableJWKSet<>(new JWKSet(jwk));
+		return new NimbusJwtEncoder(jwks);
 	}
 
-	@Bean
-	public OAuth2AuthorizationService authorizationService() {
-		return new InMemoryOAuth2AuthorizationService();
-	}
 
+	//Metodo de criptografia
 	@Bean
-	public OAuth2AuthorizationConsentService oAuth2AuthorizationConsentService() {
-		return new InMemoryOAuth2AuthorizationConsentService();
-	}
-
-	@Bean
-	public PasswordEncoder passwordEncoder() {
+	public BCryptPasswordEncoder bCryptPasswordEncoder(){
 		return new BCryptPasswordEncoder();
-	}
-
-	@Bean
-	public RegisteredClientRepository registeredClientRepository() {
-		// @formatter:off
-		RegisteredClient registeredClient = RegisteredClient
-			.withId(UUID.randomUUID().toString())
-			.clientId(clientId)
-			.clientSecret(passwordEncoder().encode(clientSecret))
-			.scope("read")
-			.scope("write")
-			.authorizationGrantType(new AuthorizationGrantType("password"))
-			.tokenSettings(tokenSettings())
-			.clientSettings(clientSettings())
-			.build();
-		// @formatter:on
-
-		return new InMemoryRegisteredClientRepository(registeredClient);
-	}
-
-	@Bean
-	public TokenSettings tokenSettings() {
-		// @formatter:off
-		return TokenSettings.builder()
-			.accessTokenFormat(OAuth2TokenFormat.SELF_CONTAINED)
-			.accessTokenTimeToLive(Duration.ofSeconds(jwtDurationSeconds))
-			.build();
-		// @formatter:on
-	}
-
-	@Bean
-	public ClientSettings clientSettings() {
-		return ClientSettings.builder().build();
-	}
-
-	@Bean
-	public AuthorizationServerSettings authorizationServerSettings() {
-		return AuthorizationServerSettings.builder().build();
-	}
-
-	@Bean
-	public OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator() {
-		NimbusJwtEncoder jwtEncoder = new NimbusJwtEncoder(jwkSource());
-		JwtGenerator jwtGenerator = new JwtGenerator(jwtEncoder);
-		jwtGenerator.setJwtCustomizer(tokenCustomizer());
-		OAuth2AccessTokenGenerator accessTokenGenerator = new OAuth2AccessTokenGenerator();
-		return new DelegatingOAuth2TokenGenerator(jwtGenerator, accessTokenGenerator);
-	}
-
-	@Bean
-	public OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer() {
-		return context -> {
-			OAuth2ClientAuthenticationToken principal = context.getPrincipal();
-			CustomUserAuthorities user = (CustomUserAuthorities) principal.getDetails();
-			List<String> authorities = user.getAuthorities().stream().map(x -> x.getAuthority()).toList();
-			if (context.getTokenType().getValue().equals("access_token")) {
-				// @formatter:off
-				context.getClaims()
-					.claim("authorities", authorities)
-					.claim("username", user.getUsername());
-				// @formatter:on
-			}
-		};
-	}
-
-	@Bean
-	public JwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
-		return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
-	}
-
-	@Bean
-	public JWKSource<SecurityContext> jwkSource() {
-		RSAKey rsaKey = generateRsa();
-		JWKSet jwkSet = new JWKSet(rsaKey);
-		return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
-	}
-
-	private static RSAKey generateRsa() {
-		KeyPair keyPair = generateRsaKey();
-		RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
-		RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
-		return new RSAKey.Builder(publicKey).privateKey(privateKey).keyID(UUID.randomUUID().toString()).build();
-	}
-
-	private static KeyPair generateRsaKey() {
-		KeyPair keyPair;
-		try {
-			KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-			keyPairGenerator.initialize(2048);
-			keyPair = keyPairGenerator.generateKeyPair();
-		} catch (Exception ex) {
-			throw new IllegalStateException(ex);
-		}
-		return keyPair;
 	}
 }

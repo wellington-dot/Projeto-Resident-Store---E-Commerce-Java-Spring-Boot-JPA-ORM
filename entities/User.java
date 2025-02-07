@@ -1,8 +1,10 @@
 package com.wsystems.residentstore.entities;
 
+import com.wsystems.residentstore.dto.LoginRequest;
 import jakarta.persistence.*;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDate;
 import java.util.*;
@@ -155,4 +157,8 @@ public class User implements UserDetails {
     }
 
 
+    public boolean isLoginCorrect(LoginRequest loginRequest, PasswordEncoder passwordEncoder) {
+        //matches() - Confere a senha sem criptografia que enviamos na requisição, e a senha criptografada que está salva no BD.
+        return passwordEncoder.matches(loginRequest.password(), this.password);
+    }
 }
